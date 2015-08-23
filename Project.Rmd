@@ -1,0 +1,175 @@
+---
+title: "Practical Machine Learning for Health Informatic Project"
+output: html_document
+---
+
+#Overview
+
+This is a health-informatic project. We will be using machine learning to predict the types of barbell lifts. The predictors are data obtained from accelerometers on the belt, forearm, arm, and dumbell of 6 participants.This study will increase our understanding in exercising patterns to improve our health. In this analysis, I have made two major assumptions. First, any predictors that have total number of "NA" or "Empty Values"  greater than 10% of the observations are not used. Second, I use K-Nearest Neighbors algorithm for data imputation and model training. K-Nearest Neighbors algorithm is used for the purpose of time saving. 
+
+#Experimental Procedure
+
+[1] Load Necessary Libraries
+```{r, results='hide'}
+library(ggplot2)
+library(lattice)
+library(caret)
+source("MyFuns.R")
+```
+
+[2] Load Traininig and Testing Data
+```{r, results='hide'}
+Train.Data <- read.csv("pml-training.csv",header=TRUE)
+Test.Data <- read.csv("pml-testing.csv",header=TRUE)
+```
+
+[3] Exploratory Data Analysis
+```{r,results='hide'}
+#Looking at the Training data for number of "NAs"  and "Empty values"
+index<-sapply(Train.Data,is.numeric)
+# Check frequency of numeric and non-numeric predictors
+summary(index)
+hist(as.numeric(index),2,col = c(0,1),labels = c('Non-Numeric','Numeric'),
+     ylim = c(0, 160),xlab='Predictor Category', main="Predictor Type Distribution")
+```
+
+```{r, echo=TRUE}
+# Check on the statistics of each predictor in Training Data
+H=summary(Train.Data)
+H=data.frame(H)
+H=H[,2:3]
+colnames(H)<-c('Predictor','Statistics')
+head(H,14)
+```
+
+[4] Data Cleaning
+```{r, results='hide'}
+# get index to data variable where "NA" or "empty value" is prevalent
+ind.RMVars<-DataClean(Train.Data)
+# Romove variables that has too many "NA" and "Empty values" and Save it as TemData
+TemData<-subset(Train.Data,select=-ind.RMVars)
+TemData<-data.frame(TemData,Classes=Train.Data[,dim(Train.Data)[2]])
+TemData<-TemData[complete.cases(TemData),]
+```
+
+[5] Data Imputation
+```{r, results='hide'}
+# Data imputation to fill in "Empty" and "NA"
+# (Note: don't use variable "Classes" in Data imputation)
+set.seed(13332)
+#KNN is used since it is generally less time expensive
+DataImputObj <- preProcess(TemData[,!names(TemData) %in% c("Classes")],
+                           method = "knnImpute")
+Train.MData <- predict(DataImputObj,TemData[,!names(TemData) %in% c("Classes")])
+Train.MData$Classes<-TemData$Classes
+```
+
+[6] Creating 75% Training Data and 25% Validation Data
+```{r, results='hide'}
+# Create TrainD and ValidD     
+#IS.TrainD -> In-Sample Training Dataset
+#IS.ValidD -> In-Sample Validation Dataset
+library(caret);library(kernlab)
+inTrain<-createDataPartition(y=Train.MData$Classes,
+                            p=0.75, list=FALSE)
+IS.TrainD<-Train.MData[inTrain,]
+IS.ValidD<-Train.MData[-inTrain,]
+# Get rid of unnecessary rownames that cause error
+row.names(IS.ValidD)<-NULL
+```
+
+[7] Obtain Training Model
+```{r, results='hide'}
+# Get Training Model with IS.TrainD
+library(MASS)
+#KNN is used since it is generally less time expensive
+modelFit<-train(Classes~., data=IS.TrainD, method="knn", 
+                preProcess=c("center","scale")) 
+# Get Validation Results
+ValidR<-predict(modelFit,IS.ValidD)
+```
+```{r,echo=TRUE}
+# Get Validiation accuracy
+ValidR.Acc<-sum(ValidR==IS.ValidD$Classes)/length(IS.ValidD$Classes)
+confusionMatrix(ValidR, IS.ValidD$Classes)
+```
+
+[8] Predicting with Test Data
+[8.1] Test Data Cleaning 
+```{r, results='hide'}
+# Remove unused variables/predictors from testing dataset
+Test.MData<-subset(Test.Data,select=-ind.RMVars)
+Test.MData<-data.frame(Test.MData,Classes=Test.Data[,dim(Test.Data)[2]])
+Test.MData<-Test.MData[complete.cases(Test.MData),]
+```
+
+[8.2] Test Data Imputation 
+```{r, results='hide'}
+# Imputation with model created from training dataset
+OS.TestD <- predict(DataImputObj,Test.MData[,!names(Test.MData) 
+                                            %in% c("Classes")])
+```
+
+[8.3] Test Data Prediction Result
+```{r, results='hide'}
+Test.pred<-predict(modelFit,OS.TestD)
+```
+
+[9] Generate the Test Data Results as Individual File
+```{r, eval=FALSE}
+source("pml_write_files.R")
+pml_write_files(Test.pred)
+```
+
+#Result and Discussion
+
+In this analysis, we used K-nearest neighbors for data imputation and model training. Since the number of observations is much greater than the number of predictors, no dimension reduction technique such as PCA is used;chance of overfitting is low. The overfitting problem have also addressed steps in [6] and [7]. The results are generated for the 20 test data in step [9], but I have no groundtruth to compare. However, I expect about 4% out of sample error since our accuracy is about 96% for the validation dataset.
+
+#Appendix
+
+Function #1
+```{r,eval=FALSE}
+DataClean <- function (Data) {
+  #[1] Get Data Dimension
+  D<-dim(Data)
+  #[2.1] Get total "NA" numbers in each column
+  Tem<-is.na(Data)
+  NA.colsum<-colSums(Tem);
+  #[2.2] Removing variables(columns) that its total "NA" values 
+  #    are greater than 10% of its observations(rows)
+  NA.index<- NA.colsum > D[1]*0.1 
+  # [3.1] Convert each element in the dataframe into a character
+  tem<-(sapply(Data,as.character))
+  # [3.2] Replace all empty values with "NA"
+  tem[tem==""]<-NA
+  # [3.3] Convert temporary data into a data.frame
+  tem<-data.frame(tem)
+  # [3.4] Get total "NA" numbers in each column
+  tem<-is.na(tem)
+  Empty.colsum<-colSums(tem);
+  # [3.5] Removing variables(columns) that its total "NA" values 
+  #    are greater than 10% of its observations(rows)
+  Empty.index<- Empty.colsum > D[1]*0.1  
+  # [4] Merge NA.ind and Empty.ind
+  NA.ind<-as.numeric(which(NA.index==TRUE))
+  Empty.ind<-as.numeric(which(Empty.index==TRUE))
+  # [5] Get rid of  Index Redundancy
+  ind<-unique(c(1:7,NA.ind,Empty.ind,160))
+  # [6] Reorder index from small to large
+  ind<-sort(ind,decreasing=FALSE)
+  return(ind)
+}
+```
+
+Function #2
+```{r,eval=FALSE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+```
+
+
